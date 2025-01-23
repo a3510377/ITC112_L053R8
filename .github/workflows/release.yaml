@@ -1,0 +1,70 @@
+name: release
+
+on:
+  push:
+  workflow_dispatch:
+    inputs:
+      version:
+        type: string
+        required: true
+        description: version
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/pip
+            ~/.platformio/.cache
+          key: ${{ runner.os }}-pio
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install PlatformIO Core
+        run: pip install --upgrade platformio
+
+      - name: Build PlatformIO Project
+        run: pio run
+
+      - name: Move files
+        shell: bash
+        run: |
+          mkdir -p build_out
+          find .pio/build/*/ -type f \( -name "*.bin" -o -name "*.elf" \) | while read file; do
+            dirname=$(basename "$(dirname "$file")")
+            cp "$file" "build_out/${dirname}_firmware.${file##*.}"
+          done
+
+      - name: Check if files exist
+        run: |
+          if [ -z "$(ls -A build_out)" ]; then
+            echo "No firmware files found to upload."
+            exit 1
+          fi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: firmware
+          path: build_out/*
+
+      - name: Release
+        uses: softprops/action-gh-release@v2
+        if: (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')) || github.event_name == 'workflow_dispatch'
+        env:
+          PACKAGE_VERSION: ${{ github.event.inputs.version || github.ref_name }}
+        with:
+          files: build_out/*
+          token: ${{ secrets.GITHUB_TOKEN }}
+          name: v${{ env.PACKAGE_VERSION }}
+          tag_name: v${{ env.PACKAGE_VERSION }}
+          draft: true
+          prerelease: false
